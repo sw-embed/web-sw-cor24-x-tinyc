@@ -1,6 +1,8 @@
 mod compiler;
+mod demos;
 mod editor;
 mod highlight;
+mod panels;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -11,273 +13,11 @@ use web_sys::{HtmlSelectElement, KeyboardEvent};
 use yew::prelude::*;
 
 use editor::Editor;
-
-const DEFAULT_SOURCE: &str = r#"// Hello, World! — COR24 C with printf and LED
-#include <stdio.h>
-
-int main() {
-    printf("Hello, World!\n");
-    printf("2 + 2 = %d\n", 2 + 2);
-
-    // Light LED D2 (active-low: write 0 to turn on)
-    *(char *)0xFF0000 = 0;
-
-    return 42;
-}
-"#;
-
-/// Built-in interactive demos (inline source, not fetched from GitHub).
-const INTERACTIVE_DEMOS: &[(&str, &str, &str)] = &[
-    (
-        "hello",
-        "Hello, World! (printf + LED)",
-        r#"// Hello, World! — COR24 C with printf and LED
-#include <stdio.h>
-
-int main() {
-    printf("Hello, World!\n");
-    printf("2 + 2 = %d\n", 2 + 2);
-
-    // Light LED D2 (active-low: write 0 to turn on)
-    *(char *)0xFF0000 = 0;
-
-    return 42;
-}
-"#,
-    ),
-    (
-        "echo",
-        "UART echo (type to see characters)",
-        r#"// UART echo — type in the terminal, characters echo back
-// Demonstrates: interrupt-driven UART RX, polling UART TX
-// Uses __attribute__((interrupt)) for the ISR
-
-#define UART_DATA   0xFF0100
-#define UART_STATUS 0xFF0101
-#define INT_ENABLE  0xFF0010
-
-void putc(int c) {
-    while (*(char *)UART_STATUS & 0x80) {}
-    *(char *)UART_DATA = c;
-}
-
-// ISR: called on each UART RX byte
-__attribute__((interrupt))
-void uart_isr() {
-    int c = *(char *)UART_DATA;  // read & acknowledge
-    putc(c);                      // echo back
-    if (c == 13 || c == 10) {
-        putc(62);  // '>'
-        putc(32);  // ' '
-    }
-}
-
-int main() {
-    // Set interrupt vector
-    asm("la r0,_uart_isr\nmov iv,r0");
-    // Enable UART RX interrupt
-    *(char *)INT_ENABLE = 1;
-
-    putc(62); // '>'
-    putc(32); // ' '
-
-    // Spin forever (ISR handles input)
-    while (1) {}
-}
-"#,
-    ),
-    (
-        "led-switch",
-        "LED follows switch S2",
-        r#"// LED follows switch — press S2 to light LED D2
-// Demonstrates: polling switch input, controlling LED output
-// Click the S2 button below to toggle!
-
-#define LED_REG  0xFF0000
-
-int main() {
-    while (1) {
-        int sw = *(char *)LED_REG;
-        // Switch is bit 0: 1=released, 0=pressed
-        // LED is active-low: write 0=on, 1=off
-        // So just write the switch state to LED — pressed=0=LED on
-        *(char *)LED_REG = sw & 1;
-    }
-}
-"#,
-    ),
-    (
-        "counter",
-        "Live counter on UART",
-        r#"// Live counter — prints incrementing numbers
-// Demonstrates: busy-wait loop, UART output
-
-#include <stdio.h>
-
-void delay() {
-    int i = 0;
-    while (i < 5000) { i++; }
-}
-
-int main() {
-    int n = 0;
-    while (1) {
-        printf("%d\n", n);
-        n++;
-        delay();
-    }
-}
-"#,
-    ),
-    (
-        "adder",
-        "Interactive adder (type two numbers)",
-        r#"// Interactive adder — type two numbers separated by Enter
-// Demonstrates: UART input parsing, printf output
-
-#include <stdio.h>
-
-int getc_poll() {
-    while (!(*(char *)0xFF0101 & 0x01)) {}
-    return *(char *)0xFF0100;
-}
-
-int read_int() {
-    int n = 0;
-    int started = 0;
-    while (1) {
-        int c = getc_poll();
-        putchar(c);  // echo
-        if (c >= 48 && c <= 57) {
-            n = n * 10 + (c - 48);
-            started = 1;
-        } else if (started) {
-            return n;
-        }
-    }
-}
-
-int main() {
-    while (1) {
-        printf("a? ");
-        int a = read_int();
-        printf("b? ");
-        int b = read_int();
-        printf("= %d\n", a + b);
-    }
-}
-"#,
-    ),
-];
-
-/// Web-only variant of demo10 (CLI demo10 uses a local header file demo10_io.h
-/// that isn't available in the web compiler; this version exercises the same
-/// #include and #pragma once features using the five bundled headers instead).
-const DEMO10B_SRC: &str = r#"// tc24r demo10b — #include with bundled headers (web variant)
-//
-// The CLI demo10 tests #include with a local header (demo10_io.h).
-// This web variant tests the same #include and #pragma once features
-// using the five headers bundled in the web compiler instead.
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <cor24.h>
-#include <stdbool.h>
-
-int main() {
-    // stdio.h: printf
-    printf("Include test\n");
-
-    // stdlib.h: malloc/free
-    int *p = (int *)malloc(sizeof(int));
-    *p = 10;
-    int v = *p;
-    free(p);
-
-    // string.h: strlen
-    char *s = "hello";
-    int len = strlen(s);
-
-    // cor24.h: UART_STATUS register
-    int status = UART_STATUS;
-
-    // stdbool.h: true/false
-    bool ok = true;
-
-    if (ok && v == 10 && len == 5 && status == 0xFF0101) {
-        printf("All headers OK\n");
-        return 42;
-    }
-    return 0;
-}
-"#;
-
-const DEMOS: &[(&str, &str)] = &[
-    ("demo.c", "counter"),
-    ("demo2.c", "char, pointers, casts, MMIO"),
-    ("demo3.c", "hex literals, pointer arithmetic, strings"),
-    ("demo4.c", "software divide and modulo"),
-    ("demo5.c", "arrays"),
-    ("demo6.c", "global char, pointer, array patterns"),
-    ("demo7.c", "pointer subtraction"),
-    ("demo8.c", "preprocessor #define"),
-    ("demo9.c", "UART RX interrupt"),
-    ("demo10b.c", "#include all bundled headers"),
-    ("demo11.c", "logical AND/OR short-circuit"),
-    ("demo12.c", "do...while loop"),
-    ("demo13.c", "break and continue"),
-    ("demo14.c", "increment and decrement"),
-    ("demo15.c", "ternary operator"),
-    ("demo16.c", "character literals"),
-    ("demo17.c", "multi-declaration"),
-    ("demo18.c", "sizeof operator"),
-    ("demo19.c", "static and extern"),
-    ("demo20.c", "statement expressions (GCC ext)"),
-    ("demo21.c", "compound assignment operators"),
-    ("demo22.c", "braceless control flow"),
-    ("demo23.c", "enum"),
-    ("demo24.c", "typedef"),
-    ("demo25.c", "struct"),
-    ("demo26.c", "switch/case"),
-    ("demo27.c", "function prototypes"),
-    ("demo28.c", "union"),
-    ("demo29.c", "sizeof with array types"),
-    ("demo30.c", "line continuation"),
-    ("demo31.c", "tentative definitions"),
-    ("demo32.c", "multi-declarator typedef"),
-    ("demo33.c", "comma-separated struct/union members"),
-    ("demo34.c", "multi-dimensional arrays"),
-    ("demo35.c", "struct array members"),
-    ("demo36.c", "forward-declared struct tags"),
-    ("demo37.c", "anonymous struct/union members"),
-    ("demo38.c", "struct brace initializer"),
-    ("demo39.c", "printf and long branches"),
-    ("demo40.c", "malloc/free (stdlib.h)"),
-    ("demo41.c", "getc, atoi, string.h"),
-    ("demo42.c", "nested struct (linked list)"),
-    ("demo43.c", "Lisp-style cons cells"),
-    ("demo44.c", "Lisp data types and printer"),
-    ("demo45.c", "Lisp eval: (+ 40 2) => 42"),
-    ("demo46.c", "unsigned int, shifts, comparisons"),
-    ("demo47.c", "struct pointer array indexing (BUG-010)"),
-    ("demo48.c", "global struct array (BUG-011)"),
-    ("demo49.c", "parenthesized ptr arithmetic + arrow (BUG-012)"),
-    ("demo50.c", "large local array + nested calls (BUG-013)"),
-    ("demo51.c", "function pointer: basic variable call"),
-    ("demo52.c", "function pointer: array dispatch table"),
-    ("demo53.c", "function pointer: passed as parameter"),
-    ("demo54.c", "global function pointer declaration"),
-    ("demo55.c", "constant expression in array size"),
-];
-
-const RAW_BASE: &str = "https://raw.githubusercontent.com/sw-embed/sw-cor24-x-tinyc/main/demos/";
-
-const REG_NAMES: [&str; 8] = ["r0", "r1", "r2", "fp", "sp", "z", "iv", "ir"];
+use panels::{LedPanel, RegistersPanel, SwitchPanel, UartPanel};
 
 #[function_component(App)]
 fn app() -> Html {
-    let source = use_state(|| DEFAULT_SOURCE.to_string());
+    let source = use_state(|| demos::DEFAULT_SOURCE.to_string());
 
     // Compilation state
     let listing = use_state(Vec::<AssembledLine>::new);
@@ -520,17 +260,8 @@ fn app() -> Html {
             *interval_handle.borrow_mut() = None;
             running.set(false);
 
-            // Check inline demos first (not fetched from GitHub)
-            let inline_src = INTERACTIVE_DEMOS
-                .iter()
-                .find(|(id, _, _)| *id == value)
-                .map(|(_, _, src)| *src)
-                .or(if value == "demo10b.c" {
-                    Some(DEMO10B_SRC)
-                } else {
-                    None
-                });
-            if let Some(src) = inline_src {
+            // Inline demos: skip the GitHub fetch
+            if let Some(src) = demos::inline_source(&value) {
                 source.set(src.to_string());
                 compile_error.set(None);
                 listing.set(Vec::new());
@@ -539,7 +270,7 @@ fn app() -> Html {
             }
 
             // Fetch from GitHub
-            let url = format!("{RAW_BASE}{value}");
+            let url = format!("{}{value}", demos::RAW_BASE);
             let source = source.clone();
             let compile_error = compile_error.clone();
             let listing = listing.clone();
@@ -618,7 +349,7 @@ fn app() -> Html {
                 // Listing
                 <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:8px;">
                     <label style="font-size:0.9rem; color:#cdd6f4; font-weight:600;">{"Listing"}</label>
-                    { render_listing(&listing, asm_error_line) }
+                    { panels::listing::render(&listing, asm_error_line) }
                 </div>
 
                 // Emulator panel
@@ -650,78 +381,19 @@ fn app() -> Html {
                             </div>
                         }
 
-                        // UART terminal (focusable for keyboard input)
-                        <div style="flex:1; min-height:80px;">
-                            <div style="color:#bac2de; font-size:0.8rem; margin-bottom:2px;">
-                                {"UART"}
-                                if *running {
-                                    <span style="color:#a6adc8;">{" (type here for input)"}</span>
-                                }
-                            </div>
-                            <div onkeydown={on_key} tabindex="0"
-                                style="background:#11111b; color:#a6e3a1; padding:8px; border-radius:4px; \
-                                       font-family:monospace; font-size:13px; white-space:pre-wrap; \
-                                       min-height:40px; max-height:200px; overflow:auto; \
-                                       outline:none; cursor:text; \
-                                       border:1px solid transparent;">
-                                { if uart_output.is_empty() && !*running && !*halted {
-                                    html! { <span style="color:#a6adc8;">{"(no output)"}</span> }
-                                } else {
-                                    html! { {&*uart_output} }
-                                }}
-                            </div>
-                        </div>
+                        <UartPanel
+                            output={AttrValue::from((*uart_output).clone())}
+                            running={*running}
+                            halted={*halted}
+                            on_key={on_key}
+                        />
 
-                        // Registers
-                        <div>
-                            <div style="color:#bac2de; font-size:0.8rem; margin-bottom:4px;">{"Registers"}</div>
-                            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:4px; \
-                                        font-family:monospace; font-size:12px;">
-                                { for (0..8).map(|i| {
-                                    html! {
-                                        <div style="background:#11111b; padding:2px 6px; border-radius:3px; \
-                                                    display:flex; justify-content:space-between;">
-                                            <span style="color:#bac2de;">{REG_NAMES[i]}</span>
-                                            <span style="color:#89b4fa;">{format!("{:06x}", registers[i])}</span>
-                                        </div>
-                                    }
-                                }) }
-                                <div style="background:#11111b; padding:2px 6px; border-radius:3px; \
-                                            display:flex; justify-content:space-between;">
-                                    <span style="color:#bac2de;">{"pc"}</span>
-                                    <span style="color:#cba6f7;">{format!("{:06x}", *pc_val)}</span>
-                                </div>
-                                <div style="background:#11111b; padding:2px 6px; border-radius:3px; \
-                                            display:flex; justify-content:space-between;">
-                                    <span style="color:#bac2de;">{"c"}</span>
-                                    <span style="color:#f9e2af;">{ if *cond_flag { "1" } else { "0" } }</span>
-                                </div>
-                            </div>
-                        </div>
+                        <RegistersPanel regs={*registers} pc={*pc_val} cond={*cond_flag} />
 
                         // Hardware I/O: LED + Switch
                         <div style="display:flex; gap:16px; align-items:center;">
-                            // LED D2
-                            <div style="display:flex; align-items:center; gap:6px;">
-                                <span style="color:#bac2de; font-size:0.8rem;">{"LED D2"}</span>
-                                <div style={format!("width:14px; height:14px; border-radius:50%; \
-                                    background:{}; border:1px solid #585b70;",
-                                    if *led_state & 1 == 0 { "#a6e3a1" } else { "#313244" }
-                                )} />
-                            </div>
-                            // Switch S2
-                            <div style="display:flex; align-items:center; gap:6px;">
-                                <span style="color:#bac2de; font-size:0.8rem;">{"S2"}</span>
-                                <button onclick={on_switch_toggle}
-                                    style={format!("padding:2px 10px; border-radius:4px; font-size:0.8rem; \
-                                        cursor:pointer; border:1px solid #585b70; \
-                                        background:{}; color:{};",
-                                        if *switch_pressed { "#a6e3a1" } else { "#313244" },
-                                        if *switch_pressed { "#1e1e2e" } else { "#9399b2" },
-                                    )}>
-                                    { if *switch_pressed { "ON" } else { "OFF" } }
-                                </button>
-                            </div>
+                            <LedPanel state={*led_state} />
+                            <SwitchPanel pressed={*switch_pressed} on_toggle={on_switch_toggle} />
                         </div>
 
                         // Status bar
@@ -758,12 +430,12 @@ fn app() -> Html {
                         { if *loading { "Loading..." } else { "Load demo..." } }
                     </option>
                     <optgroup label="Interactive">
-                        { for INTERACTIVE_DEMOS.iter().map(|(id, label, _)| html! {
+                        { for demos::INTERACTIVE_DEMOS.iter().map(|(id, label, _)| html! {
                             <option value={*id}>{*label}</option>
                         }) }
                     </optgroup>
                     <optgroup label="tc24r demos">
-                        { for DEMOS.iter().map(|(file, label)| html! {
+                        { for demos::DEMOS.iter().map(|(file, label)| html! {
                             <option value={*file}>{format!("{file} — {label}")}</option>
                         }) }
                     </optgroup>
@@ -820,74 +492,6 @@ fn app() -> Html {
                 ) }</span>
             </div>
         </main>
-    }
-}
-
-fn render_listing(listing: &[AssembledLine], error_line: Option<usize>) -> Html {
-    if listing.is_empty() {
-        return html! {
-            <pre style="flex:1; background:#181825; color:#f9e2af; border:1px solid #313244; \
-                        border-radius:6px; padding:12px; font-family:monospace; font-size:14px; \
-                        overflow:auto; white-space:pre;" />
-        };
-    }
-
-    fn format_listing_line(line: &AssembledLine) -> String {
-        if line.bytes.is_empty() {
-            format!("{:>22}{}", "", line.source)
-        } else {
-            let hex: String = line.bytes.iter().map(|b| format!("{b:02x} ")).collect();
-            format!(
-                "{:06x}  {:<14}{}",
-                line.address,
-                hex.trim_end(),
-                line.source
-            )
-        }
-    }
-
-    let width = listing.len().to_string().len();
-
-    html! {
-        <div style="flex:1; display:flex; background:#181825; border:1px solid #313244; \
-                    border-radius:6px; overflow:auto; font-family:monospace; font-size:13px; \
-                    line-height:1.5;">
-            <pre style="margin:0; padding:12px 8px 12px 0; text-align:right; color:#bac2de; \
-                        user-select:none; background:#11111b; border-right:1px solid #313244; \
-                        white-space:pre;">
-                { for listing.iter().enumerate().map(|(i, _)| {
-                    let n = i + 1;
-                    let is_err = error_line == Some(n);
-                    let style = if is_err { "color:#f38ba8; background:rgba(243,139,168,0.15);" } else { "" };
-                    html! { <span {style}>{format!("{:>width$}\n", n)}</span> }
-                }) }
-            </pre>
-            <pre style="margin:0; padding:12px; white-space:pre; flex:1;">
-                { for listing.iter().enumerate().map(|(i, line)| {
-                    let n = i + 1;
-                    let is_err = error_line == Some(n);
-                    let bg = if is_err { "background:rgba(243,139,168,0.15);" } else { "" };
-                    let formatted = format_listing_line(line);
-                    if line.bytes.is_empty() {
-                        html! { <div style={format!("color:#f9e2af;{bg}")}>{formatted}</div> }
-                    } else {
-                        let addr_end = 6;
-                        let hex_start = 8;
-                        let hex_end = hex_start + 14;
-                        html! {
-                            <div style={bg.to_string()}>
-                                <span style="color:#bac2de;">{&formatted[..addr_end]}</span>
-                                <span style="color:#bac2de;">{&formatted[addr_end..hex_start]}</span>
-                                <span style="color:#a6e3a1;">{&formatted[hex_start..hex_end.min(formatted.len())]}</span>
-                                if formatted.len() > hex_end {
-                                    <span style="color:#f9e2af;">{&formatted[hex_end..]}</span>
-                                }
-                            </div>
-                        }
-                    }
-                }) }
-            </pre>
-        </div>
     }
 }
 
