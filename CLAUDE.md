@@ -34,4 +34,14 @@ Demos live in `sw-cor24-x-tinyc/demos/`. To add new demos to the web UI:
 1. Add entries to the `DEMOS` array in `src/main.rs` — tuple of `(filename, description)`
 2. Run `cargo clippy -- -D warnings`
 3. Run `./scripts/build-pages.sh`
-4. Commit `src/main.rs` and `pages/`, push to main
+4. Commit `src/main.rs` and `pages/` on a `feat/<slug>` branch; rename to `pr/<slug>` when ready (see Workflow below).
+
+## Workflow (devgroup)
+
+This repo is hosted on a devgroup workstation. Run `onboarding` (in `$PATH`) for current state and helpers; full policy at `/disk1/github/softwarewrighter/devgroup/docs/branching-pr-strategy.md`.
+
+- **Never push.** No `git push`, no `gh`. Signaling readiness is done by branch rename only — coordinator (mike) relays `pr/*` into `dev` and pushes.
+- **Branches:** `feat/<slug>` for work in progress, based on `origin/dev` (not `origin/main`). Rename to `pr/<slug>` when ready to merge. `fix/<slug>` is the bug-fix flavor of `feat/`.
+- **Helpers** (in `$PATH`): `dg-new-feature <slug>`, `dg-new-fix <slug>`, `dg-mark-pr`, `dg-list-pr`, `dg-reap`.
+- **No history rewrites** on `dev` or `main`. Rebase is OK on your own `feat/*`.
+- **After merge:** `git fetch origin --prune && git switch dev && git branch -D pr/<slug>`.
