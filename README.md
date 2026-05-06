@@ -2,7 +2,7 @@
 
 Web UI for the [sw-cor24-x-tinyc](https://github.com/sw-embed/sw-cor24-x-tinyc) Tiny C compiler. Compile, assemble, and run COR24 programs entirely in the browser using Rust, Yew, and WebAssembly.
 
-**[Live Demo](https://sw-embed.github.io/web-sw-cor24-tinyc/)**
+**[Live Demo](https://sw-embed.github.io/web-sw-cor24-x-tinyc/)**
 
 Part of the [Software Wrighter COR24 Tools Project](https://sw-embed.github.io/web-sw-cor24-demos/#/).
 

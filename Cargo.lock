@@ -1439,7 +1439,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "web-sw-cor24-tinyc"
+name = "web-sw-cor24-x-tinyc"
 version = "0.1.0"
 dependencies = [
  "cor24-emulator",
