@@ -11,8 +11,8 @@ if ! git diff --quiet HEAD -- pages/ 2>/dev/null; then
     exit 1
 fi
 
-WASM_SRC="dist/web-sw-cor24-tinyc*.js"
-WASM_DST="pages/web-sw-cor24-tinyc*.js"
+WASM_SRC="dist/web-sw-cor24-x-tinyc*.js"
+WASM_DST="pages/web-sw-cor24-x-tinyc*.js"
 
 src_hash=""
 dst_hash=""

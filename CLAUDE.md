@@ -24,7 +24,7 @@ Edition 2024. Never suppress warnings.
 
 ## Deployment
 
-Live demo: https://sw-embed.github.io/web-sw-cor24-tinyc/
+Live demo: https://sw-embed.github.io/web-sw-cor24-x-tinyc/
 
 `trunk build --release` outputs to `dist/` (gitignored). `./scripts/build-pages.sh` builds to `dist/` then rsyncs to `pages/` (tracked). `pages/.nojekyll` is committed once and never regenerated. GitHub Actions (`.github/workflows/pages.yml`) deploys `pages/` on push to main.
 
