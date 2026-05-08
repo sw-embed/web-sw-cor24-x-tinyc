@@ -334,7 +334,7 @@ fn app() -> Html {
             <h1 style="font-size:1.4rem; color:#89b4fa;">
                 {"web-sw-cor24-x-tinyc"}
                 <span style="font-size:0.8rem; color:#bac2de; margin-left:8px;">
-                    {"COR24 compiler in your browser"}
+                    {"COR24 tiny C cross-compiler in your browser"}
                 </span>
             </h1>
 
