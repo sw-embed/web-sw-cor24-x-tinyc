@@ -14,7 +14,7 @@ use web_sys::{HtmlSelectElement, KeyboardEvent};
 use yew::prelude::*;
 
 use editor::Editor;
-use panels::{LedPanel, RegistersPanel, SwitchPanel, UartPanel};
+use panels::{I2cPanel, LedPanel, RegistersPanel, SwitchPanel, UartPanel};
 
 #[function_component(App)]
 fn app() -> Html {
@@ -29,6 +29,7 @@ fn app() -> Html {
 
     // Emulator display state (updated each tick)
     let uart_output = use_state(String::new);
+    let i2c_output = use_state(String::new);
     let registers = use_state(|| [0u32; 8]);
     let pc_val = use_state(|| 0u32);
     let cond_flag = use_state(|| false);
@@ -66,6 +67,7 @@ fn app() -> Html {
         let emu = emu.clone();
         let uart_input = uart_input.clone();
         let uart_output = uart_output.clone();
+        let i2c_output = i2c_output.clone();
         let registers = registers.clone();
         let pc_val = pc_val.clone();
         let cond_flag = cond_flag.clone();
@@ -108,6 +110,7 @@ fn app() -> Html {
 
             // Reset display state
             uart_output.set(String::new());
+            i2c_output.set(String::new());
             registers.set([0u32; 8]);
             pc_val.set(0);
             cond_flag.set(false);
@@ -124,6 +127,7 @@ fn app() -> Html {
             let emu = emu.clone();
             let uart_input = uart_input.clone();
             let uart_output = uart_output.clone();
+            let i2c_output = i2c_output.clone();
             let registers = registers.clone();
             let pc_val = pc_val.clone();
             let cond_flag = cond_flag.clone();
@@ -154,6 +158,7 @@ fn app() -> Html {
 
                 // Update display state
                 uart_output.set(e.get_uart_output().to_string());
+                i2c_output.set(e.format_i2c_log());
                 let mut regs = [0u32; 8];
                 for (i, reg) in regs.iter_mut().enumerate() {
                     *reg = e.get_reg(i as u8);
@@ -387,6 +392,12 @@ fn app() -> Html {
                             running={*running}
                             halted={*halted}
                             on_key={on_key}
+                        />
+
+                        <I2cPanel
+                            output={AttrValue::from((*i2c_output).clone())}
+                            running={*running}
+                            halted={*halted}
                         />
 
                         <RegistersPanel regs={*registers} pc={*pc_val} cond={*cond_flag} />
