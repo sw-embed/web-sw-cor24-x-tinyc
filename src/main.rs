@@ -7,7 +7,8 @@ mod panels;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use cor24_emulator::{AssembledLine, EmulatorCore};
+use cor24_assembler::AssembledLine;
+use cor24_emulator::EmulatorCore;
 use wasm_bindgen::JsCast;
 use web_sys::{HtmlSelectElement, KeyboardEvent};
 use yew::prelude::*;

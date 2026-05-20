@@ -18,5 +18,6 @@ tc24r-lexer = { path = "../sw-cor24-x-tinyc/components/frontend/crates/tc24r-lex
 tc24r-parser = { path = "../sw-cor24-x-tinyc/components/frontend/crates/tc24r-parser" }
 tc24r-codegen = { path = "../sw-cor24-x-tinyc/components/backend/crates/tc24r-codegen" }
 
-# cor24 assembler + emulator (assembly → machine code → execution)
+# cor24 assembler (assembly → machine code) and emulator (execution)
+cor24-assembler = { path = "../sw-cor24-x-assembler" }
 cor24-emulator = { path = "../sw-cor24-emulator", default-features = false }
