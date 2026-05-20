@@ -52,6 +52,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cor24-assembler"
+version = "0.1.0"
+dependencies = [
+ "cor24-isa",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cor24-emulator"
 version = "0.1.0"
 dependencies = [
@@ -1442,6 +1451,7 @@ dependencies = [
 name = "web-sw-cor24-x-tinyc"
 version = "0.1.0"
 dependencies = [
+ "cor24-assembler",
  "cor24-emulator",
  "gloo-net 0.5.0",
  "gloo-timers 0.3.0",
