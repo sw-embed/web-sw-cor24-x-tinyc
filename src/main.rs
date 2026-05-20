@@ -9,12 +9,35 @@ use std::rc::Rc;
 
 use cor24_assembler::AssembledLine;
 use cor24_emulator::EmulatorCore;
+use cor24_emulator::peripherals::i2c::devices::{Add1Device, Ds1307Device};
+use cor24_emulator::peripherals::spi::devices::SdCardDevice;
 use wasm_bindgen::JsCast;
 use web_sys::{HtmlSelectElement, KeyboardEvent};
 use yew::prelude::*;
 
 use editor::Editor;
 use panels::{I2cPanel, LedPanel, RegistersPanel, SwitchPanel, UartPanel};
+
+/// Attach the default I2C/SPI device set that the interactive I2C/SPI demos
+/// rely on. Devices that aren't touched by a given demo simply sit on the bus
+/// unobserved — no interference with CPU/UART-only demos.
+fn attach_default_peripherals(e: &mut EmulatorCore) {
+    let _ = e.attach_i2c_device(Add1Device::new(0x50, 256));
+    let _ = e.attach_i2c_device(Ds1307Device::new(0x68));
+
+    // 8-sector image with recognizable patterns so the SD card demo
+    // reads "00 01 02 ... 0F" from the first 16 bytes of sector 0.
+    let mut sd = SdCardDevice::new();
+    let mut img = Vec::with_capacity(8 * 512);
+    for sector in 0u16..8 {
+        for b in 0u16..256 {
+            img.push((sector * 16 + b) as u8);
+        }
+        img.resize(((sector + 1) * 512) as usize, 0xFF);
+    }
+    sd.replace_image(img);
+    let _ = e.attach_spi_device(sd);
+}
 
 #[function_component(App)]
 fn app() -> Html {
@@ -102,6 +125,7 @@ fn app() -> Html {
             {
                 let mut e = emu.borrow_mut();
                 *e = EmulatorCore::new();
+                attach_default_peripherals(&mut e);
                 e.load_program(0, &output.bytes);
                 e.load_program_extent(output.bytes.len() as u32);
                 e.set_button_pressed(*switch_pressed);
