@@ -1,10 +1,10 @@
 //! Assembly listing renderer.
 //!
 //! Kept as a free function rather than a `#[function_component]` because
-//! `AssembledLine` (defined upstream in `cor24-emulator`) doesn't impl
+//! `AssembledLine` (defined upstream in `cor24-assembler`) doesn't impl
 //! `PartialEq`, which Yew's `Properties` derive requires.
 
-use cor24_emulator::AssembledLine;
+use cor24_assembler::AssembledLine;
 use yew::prelude::*;
 
 pub fn render(listing: &[AssembledLine], error_line: Option<usize>) -> Html {

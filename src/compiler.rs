@@ -1,6 +1,6 @@
 //! Compile pipeline: C source → COR24 assembly → machine code.
 
-use cor24_emulator::{AssembledLine, Assembler};
+use cor24_assembler::{AssembledLine, Assembler};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ErrorSource {
