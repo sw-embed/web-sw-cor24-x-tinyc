@@ -4,12 +4,14 @@
 //! stays small and so additional peripherals (I2C device panels in a later
 //! saga step) can be added by dropping a new file in here.
 
+pub mod i2c;
 pub mod led;
 pub mod listing;
 pub mod registers;
 pub mod switch;
 pub mod uart;
 
+pub use i2c::I2cPanel;
 pub use led::LedPanel;
 pub use registers::RegistersPanel;
 pub use switch::SwitchPanel;
