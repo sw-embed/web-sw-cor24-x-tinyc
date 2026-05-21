@@ -2,6 +2,7 @@ mod compiler;
 mod demos;
 mod editor;
 mod highlight;
+mod idb;
 mod panels;
 
 use std::cell::RefCell;
@@ -11,29 +12,42 @@ use cor24_assembler::AssembledLine;
 use cor24_emulator::EmulatorCore;
 use cor24_emulator::peripherals::i2c::I2cHandle;
 use cor24_emulator::peripherals::i2c::devices::{Add1Device, Ds1307Device};
-use cor24_emulator::peripherals::spi::devices::SdCardDevice;
-use wasm_bindgen::JsCast;
+use cor24_emulator::peripherals::spi::SpiHandle;
+use cor24_emulator::peripherals::spi::devices::{SdCardDevice, SdCardHandleExt};
+use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{HtmlSelectElement, KeyboardEvent};
 use yew::prelude::*;
 
 use editor::Editor;
-use panels::{I2cPanel, LedPanel, RegistersPanel, RtcPanel, SwitchPanel, UartPanel};
+use panels::{
+    I2cPanel, LedPanel, RegistersPanel, RtcPanel, SdCardPanel, SwitchPanel, UartPanel,
+};
 
 const LS_BATTERY: &str = "rtc.battery";
 const LS_ANCHOR_REAL: &str = "rtc.anchor_real_ms";
 const LS_ANCHOR_SECS: &str = "rtc.anchor_rtc_secs";
+const IDB_SDCARD_IMAGE: &str = "sdcard.image";
+
+type DefaultPeripheralHandles = (Option<I2cHandle<Ds1307Device>>, SpiHandle<SdCardDevice>);
 
 /// Attach the default I2C/SPI device set that the interactive I2C/SPI demos
-/// rely on. Devices that aren't touched by a given demo simply sit on the bus
-/// unobserved — no interference with CPU/UART-only demos. Returns the DS1307
-/// handle so the RTC panel can mutate the device mid-run.
-fn attach_default_peripherals(e: &mut EmulatorCore) -> Option<I2cHandle<Ds1307Device>> {
+/// rely on. The SD card starts with the test-pattern image; callers re-apply
+/// any user upload after this returns.
+fn attach_default_peripherals(e: &mut EmulatorCore) -> DefaultPeripheralHandles {
     let _ = e.attach_i2c_device(Add1Device::new(0x50, 256));
     let rtc_handle = e.attach_i2c_device(Ds1307Device::new(0x68)).ok();
 
-    // 8-sector image with recognizable patterns so the SD card demo
-    // reads "00 01 02 ... 0F" from the first 16 bytes of sector 0.
     let mut sd = SdCardDevice::new();
+    sd.replace_image(default_sd_image());
+    let sd_handle = e.attach_spi_device(sd);
+
+    (rtc_handle, sd_handle)
+}
+
+/// 8-sector image with recognizable patterns: sector 0 = 0x00..0xFF then
+/// 0xFF padding to 512. The `spi-sdcard` C demo reads sector 0 and prints
+/// the first 16 bytes ("00 01 02 ... 0F").
+fn default_sd_image() -> Vec<u8> {
     let mut img = Vec::with_capacity(8 * 512);
     for sector in 0u16..8 {
         for b in 0u16..256 {
@@ -41,10 +55,14 @@ fn attach_default_peripherals(e: &mut EmulatorCore) -> Option<I2cHandle<Ds1307De
         }
         img.resize(((sector + 1) * 512) as usize, 0xFF);
     }
-    sd.replace_image(img);
-    let _ = e.attach_spi_device(sd);
+    img
+}
 
-    rtc_handle
+async fn read_file_bytes(file: &web_sys::File) -> Result<Vec<u8>, JsValue> {
+    let promise = file.array_buffer();
+    let result = wasm_bindgen_futures::JsFuture::from(promise).await?;
+    let array_buf: js_sys::ArrayBuffer = result.dyn_into()?;
+    Ok(js_sys::Uint8Array::new(&array_buf).to_vec())
 }
 
 fn ls_get(key: &str) -> Option<String> {
@@ -128,6 +146,36 @@ fn app() -> Html {
         })
     };
 
+    // SD card state: handle (recreated each Run), user upload bytes,
+    // displayed metadata. Default image is the 4 KB test pattern; user
+    // upload (if any) overrides it on every Run.
+    let sd_handle: Rc<RefCell<Option<SpiHandle<SdCardDevice>>>> = use_mut_ref(|| None);
+    let sd_user_image: Rc<RefCell<Option<Vec<u8>>>> = use_mut_ref(|| None);
+    let sd_size = use_state(|| default_sd_image().len());
+    let sd_filename = use_state(|| None::<String>);
+    let sd_uploaded = use_state(|| false);
+
+    // Restore SD card upload from IndexedDB on mount.
+    {
+        let sd_user_image = sd_user_image.clone();
+        let sd_handle = sd_handle.clone();
+        let sd_size = sd_size.clone();
+        let sd_uploaded = sd_uploaded.clone();
+        use_effect_with((), move |_| {
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Some(bytes) = idb::get(IDB_SDCARD_IMAGE).await {
+                    sd_size.set(bytes.len());
+                    sd_uploaded.set(true);
+                    if let Some(handle) = sd_handle.borrow().as_ref() {
+                        handle.replace_image(bytes.clone());
+                    }
+                    *sd_user_image.borrow_mut() = Some(bytes);
+                }
+            });
+            || ()
+        });
+    }
+
     // Wall-clock tick: when battery is on, advance the display + the device
     // every second so the panel reads like a real clock even outside Run.
     {
@@ -208,6 +256,8 @@ fn app() -> Html {
         let rtc_battery = rtc_battery.clone();
         let rtc_anchor = rtc_anchor.clone();
         let rtc_display = rtc_display.clone();
+        let sd_handle = sd_handle.clone();
+        let sd_user_image = sd_user_image.clone();
 
         Callback::from(move |_: MouseEvent| {
             // Stop any existing run loop
@@ -231,12 +281,22 @@ fn app() -> Html {
             {
                 let mut e = emu.borrow_mut();
                 *e = EmulatorCore::new();
-                let rtc_h = attach_default_peripherals(&mut e);
+                let (rtc_h, sd_h) = attach_default_peripherals(&mut e);
                 *rtc_handle.borrow_mut() = rtc_h;
+                *sd_handle.borrow_mut() = Some(sd_h);
                 e.load_program(0, &output.bytes);
                 e.load_program_extent(output.bytes.len() as u32);
                 e.set_button_pressed(*switch_pressed);
                 e.resume();
+            }
+
+            // Re-apply the user's uploaded SD image on top of the
+            // default image so uploads survive across Runs.
+            if let (Some(handle), Some(bytes)) = (
+                sd_handle.borrow().as_ref(),
+                sd_user_image.borrow().as_ref(),
+            ) {
+                handle.replace_image(bytes.clone());
             }
 
             // Apply RTC state to the freshly-attached DS1307.
@@ -398,6 +458,57 @@ fn app() -> Html {
                 ls_remove(LS_ANCHOR_SECS);
             }
             rtc_battery.set(on);
+        })
+    };
+
+    let on_sd_upload = {
+        let sd_handle = sd_handle.clone();
+        let sd_user_image = sd_user_image.clone();
+        let sd_size = sd_size.clone();
+        let sd_filename = sd_filename.clone();
+        let sd_uploaded = sd_uploaded.clone();
+        Callback::from(move |file: web_sys::File| {
+            let sd_handle = sd_handle.clone();
+            let sd_user_image = sd_user_image.clone();
+            let sd_size = sd_size.clone();
+            let sd_filename = sd_filename.clone();
+            let sd_uploaded = sd_uploaded.clone();
+            let name = file.name();
+            wasm_bindgen_futures::spawn_local(async move {
+                let bytes = match read_file_bytes(&file).await {
+                    Ok(b) => b,
+                    Err(_) => return,
+                };
+                sd_size.set(bytes.len());
+                sd_filename.set(Some(name));
+                sd_uploaded.set(true);
+                if let Some(handle) = sd_handle.borrow().as_ref() {
+                    handle.replace_image(bytes.clone());
+                }
+                let _ = idb::put(IDB_SDCARD_IMAGE, &bytes).await;
+                *sd_user_image.borrow_mut() = Some(bytes);
+            });
+        })
+    };
+
+    let on_sd_reset = {
+        let sd_handle = sd_handle.clone();
+        let sd_user_image = sd_user_image.clone();
+        let sd_size = sd_size.clone();
+        let sd_filename = sd_filename.clone();
+        let sd_uploaded = sd_uploaded.clone();
+        Callback::from(move |_: ()| {
+            *sd_user_image.borrow_mut() = None;
+            let default = default_sd_image();
+            sd_size.set(default.len());
+            sd_filename.set(None);
+            sd_uploaded.set(false);
+            if let Some(handle) = sd_handle.borrow().as_ref() {
+                handle.replace_image(default);
+            }
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = idb::remove(IDB_SDCARD_IMAGE).await;
+            });
         })
     };
 
@@ -606,6 +717,14 @@ fn app() -> Html {
                             battery={*rtc_battery}
                             on_set={on_rtc_set}
                             on_battery_toggle={on_battery_toggle}
+                        />
+
+                        <SdCardPanel
+                            size={*sd_size}
+                            user_uploaded={*sd_uploaded}
+                            filename={(*sd_filename).clone().map(AttrValue::from)}
+                            on_upload={on_sd_upload}
+                            on_reset={on_sd_reset}
                         />
 
                         <RegistersPanel regs={*registers} pc={*pc_val} cond={*cond_flag} />

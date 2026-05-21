@@ -9,7 +9,14 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 gloo-net = { version = "0.5", features = ["http"] }
 gloo-timers = "0.3"
-web-sys = { version = "0.3", features = ["HtmlElement", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "KeyboardEvent", "Storage", "Window"] }
+web-sys = { version = "0.3", features = [
+    "HtmlElement", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement",
+    "KeyboardEvent", "Event", "Storage", "Window",
+    "Blob", "File", "FileList",
+    "IdbDatabase", "IdbFactory", "IdbObjectStore", "IdbOpenDbRequest",
+    "IdbRequest", "IdbTransaction", "IdbTransactionMode", "IdbVersionChangeEvent",
+    "DomException",
+] }
 js-sys = "0.3"
 
 # tc24r compiler pipeline (C → COR24 assembly)
