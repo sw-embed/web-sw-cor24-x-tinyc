@@ -9,7 +9,8 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 gloo-net = { version = "0.5", features = ["http"] }
 gloo-timers = "0.3"
-web-sys = { version = "0.3", features = ["HtmlElement", "HtmlTextAreaElement", "HtmlSelectElement", "KeyboardEvent"] }
+web-sys = { version = "0.3", features = ["HtmlElement", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "KeyboardEvent", "Storage", "Window"] }
+js-sys = "0.3"
 
 # tc24r compiler pipeline (C → COR24 assembly)
 tc24r-span = { path = "../sw-cor24-x-tinyc/components/core/crates/tc24r-span" }

@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use cor24_assembler::AssembledLine;
 use cor24_emulator::EmulatorCore;
+use cor24_emulator::peripherals::i2c::I2cHandle;
 use cor24_emulator::peripherals::i2c::devices::{Add1Device, Ds1307Device};
 use cor24_emulator::peripherals::spi::devices::SdCardDevice;
 use wasm_bindgen::JsCast;
@@ -16,14 +17,19 @@ use web_sys::{HtmlSelectElement, KeyboardEvent};
 use yew::prelude::*;
 
 use editor::Editor;
-use panels::{I2cPanel, LedPanel, RegistersPanel, SwitchPanel, UartPanel};
+use panels::{I2cPanel, LedPanel, RegistersPanel, RtcPanel, SwitchPanel, UartPanel};
+
+const LS_BATTERY: &str = "rtc.battery";
+const LS_ANCHOR_REAL: &str = "rtc.anchor_real_ms";
+const LS_ANCHOR_SECS: &str = "rtc.anchor_rtc_secs";
 
 /// Attach the default I2C/SPI device set that the interactive I2C/SPI demos
 /// rely on. Devices that aren't touched by a given demo simply sit on the bus
-/// unobserved — no interference with CPU/UART-only demos.
-fn attach_default_peripherals(e: &mut EmulatorCore) {
+/// unobserved — no interference with CPU/UART-only demos. Returns the DS1307
+/// handle so the RTC panel can mutate the device mid-run.
+fn attach_default_peripherals(e: &mut EmulatorCore) -> Option<I2cHandle<Ds1307Device>> {
     let _ = e.attach_i2c_device(Add1Device::new(0x50, 256));
-    let _ = e.attach_i2c_device(Ds1307Device::new(0x68));
+    let rtc_handle = e.attach_i2c_device(Ds1307Device::new(0x68)).ok();
 
     // 8-sector image with recognizable patterns so the SD card demo
     // reads "00 01 02 ... 0F" from the first 16 bytes of sector 0.
@@ -37,6 +43,49 @@ fn attach_default_peripherals(e: &mut EmulatorCore) {
     }
     sd.replace_image(img);
     let _ = e.attach_spi_device(sd);
+
+    rtc_handle
+}
+
+fn ls_get(key: &str) -> Option<String> {
+    let window = web_sys::window()?;
+    let storage = window.local_storage().ok()??;
+    storage.get_item(key).ok()?
+}
+
+fn ls_set(key: &str, value: &str) {
+    if let Some(w) = web_sys::window()
+        && let Ok(Some(s)) = w.local_storage()
+    {
+        let _ = s.set_item(key, value);
+    }
+}
+
+fn ls_remove(key: &str) {
+    if let Some(w) = web_sys::window()
+        && let Ok(Some(s)) = w.local_storage()
+    {
+        let _ = s.remove_item(key);
+    }
+}
+
+/// rtc(t) = (anchor_secs + (t - anchor_real_ms)/1000) mod 86400.
+fn rtc_compute_secs(anchor_real_ms: f64, anchor_secs: u32, now_ms: f64) -> u32 {
+    let elapsed_s = ((now_ms - anchor_real_ms) / 1000.0) as i64;
+    let total = anchor_secs as i64 + elapsed_s;
+    total.rem_euclid(86400) as u32
+}
+
+fn secs_to_hms(secs: u32) -> (u8, u8, u8) {
+    (
+        ((secs / 3600) % 24) as u8,
+        ((secs / 60) % 60) as u8,
+        (secs % 60) as u8,
+    )
+}
+
+fn hms_to_secs(h: u8, m: u8, s: u8) -> u32 {
+    (h as u32) * 3600 + (m as u32) * 60 + s as u32
 }
 
 #[function_component(App)]
@@ -49,6 +98,59 @@ fn app() -> Html {
 
     // Emulator (mutable ref, survives re-renders)
     let emu: Rc<RefCell<EmulatorCore>> = use_mut_ref(EmulatorCore::new);
+
+    // DS1307 handle (Some after first Run; the RTC panel reads/writes time through this)
+    let rtc_handle: Rc<RefCell<Option<I2cHandle<Ds1307Device>>>> = use_mut_ref(|| None);
+
+    // RTC battery + anchor — initial values loaded once from localStorage.
+    let rtc_battery = use_state(|| ls_get(LS_BATTERY).as_deref() == Some("1"));
+    let rtc_anchor: Rc<RefCell<(f64, u32)>> = use_mut_ref(|| {
+        (
+            ls_get(LS_ANCHOR_REAL)
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or_else(js_sys::Date::now),
+            ls_get(LS_ANCHOR_SECS)
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0),
+        )
+    });
+    // Seed the display from anchor so the user sees the "if you ran right
+    // now" time before the first Run. Battery off → 00:00:00.
+    let rtc_display = {
+        let battery = *rtc_battery;
+        let anchor = *rtc_anchor.borrow();
+        use_state(move || {
+            if battery {
+                secs_to_hms(rtc_compute_secs(anchor.0, anchor.1, js_sys::Date::now()))
+            } else {
+                (0, 0, 0)
+            }
+        })
+    };
+
+    // Wall-clock tick: when battery is on, advance the display + the device
+    // every second so the panel reads like a real clock even outside Run.
+    {
+        let rtc_battery = rtc_battery.clone();
+        let rtc_anchor = rtc_anchor.clone();
+        let rtc_handle = rtc_handle.clone();
+        let rtc_display = rtc_display.clone();
+        use_effect_with((), move |_| {
+            let interval = gloo_timers::callback::Interval::new(1000, move || {
+                if *rtc_battery {
+                    let now = js_sys::Date::now();
+                    let anchor = *rtc_anchor.borrow();
+                    let secs = rtc_compute_secs(anchor.0, anchor.1, now);
+                    let (h, m, s) = secs_to_hms(secs);
+                    if let Some(handle) = rtc_handle.borrow().as_ref() {
+                        handle.with(|d| d.set_time(h, m, s));
+                    }
+                    rtc_display.set((h, m, s));
+                }
+            });
+            move || drop(interval)
+        });
+    }
 
     // Emulator display state (updated each tick)
     let uart_output = use_state(String::new);
@@ -102,6 +204,10 @@ fn app() -> Html {
         let runtime_error_line = runtime_error_line.clone();
         let interval_handle = interval_handle.clone();
         let switch_pressed = switch_pressed.clone();
+        let rtc_handle = rtc_handle.clone();
+        let rtc_battery = rtc_battery.clone();
+        let rtc_anchor = rtc_anchor.clone();
+        let rtc_display = rtc_display.clone();
 
         Callback::from(move |_: MouseEvent| {
             // Stop any existing run loop
@@ -125,11 +231,34 @@ fn app() -> Html {
             {
                 let mut e = emu.borrow_mut();
                 *e = EmulatorCore::new();
-                attach_default_peripherals(&mut e);
+                let rtc_h = attach_default_peripherals(&mut e);
+                *rtc_handle.borrow_mut() = rtc_h;
                 e.load_program(0, &output.bytes);
                 e.load_program_extent(output.bytes.len() as u32);
                 e.set_button_pressed(*switch_pressed);
                 e.resume();
+            }
+
+            // Apply RTC state to the freshly-attached DS1307.
+            // Battery on: time advanced from the persisted anchor by elapsed wall-clock.
+            // Battery off: device starts at 0 (DS1307 default); reset anchor for cleanliness.
+            {
+                let now = js_sys::Date::now();
+                if *rtc_battery {
+                    let (anchor_real, anchor_secs) = *rtc_anchor.borrow();
+                    let secs = rtc_compute_secs(anchor_real, anchor_secs, now);
+                    let (h, m, s) = secs_to_hms(secs);
+                    if let Some(handle) = rtc_handle.borrow().as_ref() {
+                        handle.with(|d| d.set_time(h, m, s));
+                    }
+                    *rtc_anchor.borrow_mut() = (now, secs);
+                    ls_set(LS_ANCHOR_REAL, &now.to_string());
+                    ls_set(LS_ANCHOR_SECS, &secs.to_string());
+                    rtc_display.set((h, m, s));
+                } else {
+                    *rtc_anchor.borrow_mut() = (now, 0);
+                    rtc_display.set((0, 0, 0));
+                }
             }
 
             // Reset display state
@@ -152,6 +281,8 @@ fn app() -> Html {
             let uart_input = uart_input.clone();
             let uart_output = uart_output.clone();
             let i2c_output = i2c_output.clone();
+            let rtc_handle_inner = rtc_handle.clone();
+            let rtc_display = rtc_display.clone();
             let registers = registers.clone();
             let pc_val = pc_val.clone();
             let cond_flag = cond_flag.clone();
@@ -183,6 +314,10 @@ fn app() -> Html {
                 // Update display state
                 uart_output.set(e.get_uart_output().to_string());
                 i2c_output.set(e.format_i2c_log());
+                if let Some(handle) = rtc_handle_inner.borrow().as_ref() {
+                    let (h, m, s) = handle.with(|d| (d.hour(), d.minute(), d.second()));
+                    rtc_display.set((h, m, s));
+                }
                 let mut regs = [0u32; 8];
                 for (i, reg) in regs.iter_mut().enumerate() {
                     *reg = e.get_reg(i as u8);
@@ -221,6 +356,48 @@ fn app() -> Html {
             });
 
             *interval_handle.borrow_mut() = Some(interval);
+        })
+    };
+
+    let on_rtc_set = {
+        let rtc_handle = rtc_handle.clone();
+        let rtc_battery = rtc_battery.clone();
+        let rtc_anchor = rtc_anchor.clone();
+        let rtc_display = rtc_display.clone();
+        Callback::from(move |(h, m, s): (u8, u8, u8)| {
+            if let Some(handle) = rtc_handle.borrow().as_ref() {
+                handle.with(|d| d.set_time(h, m, s));
+            }
+            let now = js_sys::Date::now();
+            let secs = hms_to_secs(h, m, s);
+            *rtc_anchor.borrow_mut() = (now, secs);
+            if *rtc_battery {
+                ls_set(LS_ANCHOR_REAL, &now.to_string());
+                ls_set(LS_ANCHOR_SECS, &secs.to_string());
+            }
+            rtc_display.set((h, m, s));
+        })
+    };
+
+    let on_battery_toggle = {
+        let rtc_battery = rtc_battery.clone();
+        let rtc_anchor = rtc_anchor.clone();
+        let rtc_display = rtc_display.clone();
+        Callback::from(move |on: bool| {
+            let now = js_sys::Date::now();
+            let (h, m, s) = *rtc_display;
+            let display_secs = hms_to_secs(h, m, s);
+            *rtc_anchor.borrow_mut() = (now, display_secs);
+            if on {
+                ls_set(LS_BATTERY, "1");
+                ls_set(LS_ANCHOR_REAL, &now.to_string());
+                ls_set(LS_ANCHOR_SECS, &display_secs.to_string());
+            } else {
+                ls_set(LS_BATTERY, "0");
+                ls_remove(LS_ANCHOR_REAL);
+                ls_remove(LS_ANCHOR_SECS);
+            }
+            rtc_battery.set(on);
         })
     };
 
@@ -422,6 +599,13 @@ fn app() -> Html {
                             output={AttrValue::from((*i2c_output).clone())}
                             running={*running}
                             halted={*halted}
+                        />
+
+                        <RtcPanel
+                            time={*rtc_display}
+                            battery={*rtc_battery}
+                            on_set={on_rtc_set}
+                            on_battery_toggle={on_battery_toggle}
                         />
 
                         <RegistersPanel regs={*registers} pc={*pc_val} cond={*cond_flag} />
