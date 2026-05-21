@@ -9,6 +9,7 @@ pub mod led;
 pub mod listing;
 pub mod registers;
 pub mod rtc;
+pub mod sdcard;
 pub mod switch;
 pub mod uart;
 
@@ -16,5 +17,6 @@ pub use i2c::I2cPanel;
 pub use led::LedPanel;
 pub use registers::RegistersPanel;
 pub use rtc::RtcPanel;
+pub use sdcard::SdCardPanel;
 pub use switch::SwitchPanel;
 pub use uart::UartPanel;
